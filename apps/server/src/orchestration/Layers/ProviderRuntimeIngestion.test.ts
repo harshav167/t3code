@@ -1007,11 +1007,12 @@ describe("ProviderRuntimeIngestion", () => {
 
     const thread = await waitForThread(harness.readModel, (entry) =>
       entry.activities.some(
-        (activity: ProviderRuntimeTestActivity) => activity.id === "evt-tool-completed-with-data",
+        (activity: ProviderRuntimeTestActivity) =>
+          activity.id === "provider-tool:item-tool-completed",
       ),
     );
     const activity = thread.activities.find(
-      (entry: ProviderRuntimeTestActivity) => entry.id === "evt-tool-completed-with-data",
+      (entry: ProviderRuntimeTestActivity) => entry.id === "provider-tool:item-tool-completed",
     );
     const payload =
       activity?.payload && typeof activity.payload === "object"
@@ -1062,11 +1063,12 @@ describe("ProviderRuntimeIngestion", () => {
 
     const thread = await waitForThread(harness.readModel, (entry) =>
       entry.activities.some(
-        (activity: ProviderRuntimeTestActivity) => activity.id === "evt-command-completed",
+        (activity: ProviderRuntimeTestActivity) =>
+          activity.id === "provider-tool:item-command-completed",
       ),
     );
     const activity = thread.activities.find(
-      (entry: ProviderRuntimeTestActivity) => entry.id === "evt-command-completed",
+      (entry: ProviderRuntimeTestActivity) => entry.id === "provider-tool:item-command-completed",
     );
     const payload =
       activity?.payload && typeof activity.payload === "object"
@@ -1104,11 +1106,11 @@ describe("ProviderRuntimeIngestion", () => {
 
     const thread = await waitForThread(harness.readModel, (entry) =>
       entry.activities.some(
-        (activity: ProviderRuntimeTestActivity) => activity.id === "evt-read-path-completed",
+        (activity: ProviderRuntimeTestActivity) => activity.id === "provider-tool:item-read-path",
       ),
     );
     const activity = thread.activities.find(
-      (entry: ProviderRuntimeTestActivity) => entry.id === "evt-read-path-completed",
+      (entry: ProviderRuntimeTestActivity) => entry.id === "provider-tool:item-read-path",
     );
     const payload =
       activity?.payload && typeof activity.payload === "object"
@@ -2865,7 +2867,7 @@ describe("ProviderRuntimeIngestion", () => {
     expect(Array.isArray(planPayload?.plan)).toBe(true);
 
     const toolUpdate = thread.activities.find(
-      (activity: ProviderRuntimeTestActivity) => activity.id === "evt-item-updated",
+      (activity: ProviderRuntimeTestActivity) => activity.id === "provider-tool:item-p1-tool",
     );
     const toolUpdatePayload =
       toolUpdate?.payload && typeof toolUpdate.payload === "object"
