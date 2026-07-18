@@ -1,5 +1,6 @@
 import * as Cause from "effect/Cause";
 import * as Exit from "effect/Exit";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import {
@@ -42,6 +43,7 @@ export type PiStdoutDecodeResult =
 
 const JsonValue = Schema.UnknownFromJsonString;
 const decodeJsonValue = Schema.decodeUnknownExit(JsonValue);
+const decodeJsonObject = Schema.decodeUnknownOption(Schema.Record(Schema.String, Schema.Unknown));
 
 function decodeError(schema: Schema.Top, value: unknown): string | null {
   const result = Schema.decodeUnknownExit(schema as Schema.Decoder<unknown, never>)(value);
@@ -58,7 +60,10 @@ export function decodePiStdoutLine(line: string): PiStdoutDecodeResult {
   if (value === null || typeof value !== "object" || Array.isArray(value)) {
     return { _tag: "FatalProtocolError", error: "Pi protocol frame must be a JSON object." };
   }
-  const record = value as Record<string, unknown>;
+  const record = Option.getOrUndefined(decodeJsonObject(value));
+  if (record === undefined) {
+    return { _tag: "FatalProtocolError", error: "Pi protocol frame must be a JSON object." };
+  }
   const type = record["type"];
 
   if (type === "response") {

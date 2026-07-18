@@ -23,6 +23,7 @@ import {
 } from "../ProviderDriver.ts";
 import type { ServerProviderDraft } from "../providerSnapshot.ts";
 import { mergeProviderInstanceEnvironment } from "../ProviderInstanceEnvironment.ts";
+import { makePiCommandInventory, makePiServerProvider } from "../pi/PiCommands.ts";
 import {
   enrichProviderSnapshotWithVersionAdvisory,
   makePackageManagedProviderMaintenanceResolver,
@@ -86,6 +87,7 @@ export const PiDriver: ProviderDriver<PiSettings, PiDriverEnv> = {
       const httpClient = yield* HttpClient.HttpClient;
       const serverSettings = yield* ServerSettingsService;
       const serverConfig = yield* ServerConfig;
+      const eventLoggers = yield* ProviderEventLoggers;
       const processEnv = mergeProviderInstanceEnvironment(environment);
       const continuationIdentity = defaultProviderContinuationIdentity({
         driverKind: DRIVER_KIND,
@@ -102,10 +104,13 @@ export const PiDriver: ProviderDriver<PiSettings, PiDriverEnv> = {
         binaryPath: effectiveConfig.binaryPath,
         env: processEnv,
       });
+      const commandInventory = yield* makePiCommandInventory();
 
       const adapter = yield* makePiAdapter(effectiveConfig, {
         instanceId,
         environment: processEnv,
+        commandInventory,
+        ...(eventLoggers.native ? { nativeEventLogger: eventLoggers.native } : {}),
       });
       const textGeneration = yield* makePiTextGeneration(effectiveConfig, processEnv);
 
@@ -113,13 +118,16 @@ export const PiDriver: ProviderDriver<PiSettings, PiDriverEnv> = {
         effectiveConfig,
         serverConfig.cwd,
         processEnv,
+        commandInventory,
       ).pipe(
         Effect.map(stampIdentity),
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
       );
 
       const snapshotSettings = makeProviderSnapshotSettingsSource(effectiveConfig, serverSettings);
-      const snapshot = yield* makeManagedServerProvider<ProviderSnapshotSettings<PiSettings>>({
+      const managedSnapshot = yield* makeManagedServerProvider<
+        ProviderSnapshotSettings<PiSettings>
+      >({
         maintenanceCapabilities,
         getSettings: snapshotSettings.getSettings,
         streamSettings: snapshotSettings.streamSettings,
@@ -151,6 +159,7 @@ export const PiDriver: ProviderDriver<PiSettings, PiDriverEnv> = {
             }),
         ),
       );
+      const snapshot = makePiServerProvider(managedSnapshot, commandInventory);
 
       return {
         instanceId,

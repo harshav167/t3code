@@ -10,6 +10,7 @@ import {
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import type * as FileSystem from "effect/FileSystem";
+import * as Option from "effect/Option";
 
 import {
   ProviderAdapterRequestError,
@@ -21,16 +22,12 @@ import {
   buildPiUserInputResponse,
   type PendingUserInput,
 } from "./PiExtensionUi.ts";
+import { resolveForkTargetEntryId, type PiThinkingLevel, type RpcCommand } from "./PiModels.ts";
 import {
-  extractForkMessages,
-  extractSessionFile,
-  piForkSucceeded,
-  type PiRpcDialect,
   piResponseSucceeded,
-  resolveForkTargetEntryId,
-  type PiThinkingLevel,
-  type RpcCommand,
-} from "./PiModels.ts";
+  piRollbackSucceeded,
+  type PiRpcDialectCodec,
+} from "./PiRpcDialect.ts";
 import type { PiSessionEvent } from "./PiSessionEvents.ts";
 import type { RpcExtensionUIResponse, RpcResponse } from "./PiRpcProtocol.ts";
 import type { PiPendingApproval, PiTurnState } from "./PiSessionTypes.ts";
@@ -55,7 +52,7 @@ export interface PiSessionOperationsOptions {
   readonly setCurrentModel: (model: string | undefined) => void;
   readonly getThinking: () => PiThinkingLevel | undefined;
   readonly setThinking: (thinking: PiThinkingLevel | undefined) => void;
-  readonly getDialect: () => PiRpcDialect;
+  readonly getCodec: () => PiRpcDialectCodec;
   readonly turns: Array<{ id: TurnId; items: Array<PiToolItem> }>;
   readonly pendingApprovals: Map<ApprovalRequestId, PiPendingApproval>;
   readonly pendingInputs: Map<ApprovalRequestId, PendingUserInput>;
@@ -109,17 +106,16 @@ export function makePiSessionOperations(options: PiSessionOperationsOptions) {
             issue: "Cannot roll back while a Pi turn is running.",
           });
         }
-        const branchCommand = options.getDialect() === "omp";
-        const messageCommand = branchCommand ? "get_branch_messages" : "get_fork_messages";
-        const messages = yield* options.request({ type: messageCommand }, 5_000);
-        if (!piResponseSucceeded(messages, messageCommand)) {
+        const codec = options.getCodec();
+        const messages = yield* options.request(codec.listRollbackMessagesCommand, 5_000);
+        if (!piResponseSucceeded(messages, codec.listRollbackMessagesCommand.type)) {
           return yield* new ProviderAdapterRequestError({
             provider: PROVIDER,
-            method: branchCommand ? "get_branch_messages" : "get_fork_messages",
+            method: codec.listRollbackMessagesCommand.type,
             detail: "The Pi runtime did not return branchable messages for rollback.",
           });
         }
-        const target = resolveForkTargetEntryId(extractForkMessages(messages), numTurns);
+        const target = resolveForkTargetEntryId(codec.decodeRollbackMessages(messages), numTurns);
         if (!target) {
           return yield* new ProviderAdapterValidationError({
             provider: PROVIDER,
@@ -129,16 +125,17 @@ export function makePiSessionOperations(options: PiSessionOperationsOptions) {
         }
         const replacement = yield* options.request(
           target.kind === "fork"
-            ? branchCommand
-              ? { type: "branch", entryId: target.entryId }
-              : { type: "fork", entryId: target.entryId }
+            ? codec.makeRollbackCommand(target.entryId)
             : { type: "new_session" },
           15_000,
         );
-        if (!piForkSucceeded(replacement)) {
+        if (!piRollbackSucceeded(replacement)) {
           return yield* new ProviderAdapterRequestError({
             provider: PROVIDER,
-            method: target.kind === "fork" ? (branchCommand ? "branch" : "fork") : "new_session",
+            method:
+              target.kind === "fork"
+                ? codec.makeRollbackCommand(target.entryId).type
+                : "new_session",
             detail: "Pi rejected or cancelled the rollback.",
           });
         }
@@ -152,7 +149,7 @@ export function makePiSessionOperations(options: PiSessionOperationsOptions) {
         const state = yield* options
           .request({ type: "get_state" }, 5_000)
           .pipe(Effect.orElseSucceed(() => undefined));
-        const sessionFile = extractSessionFile(state);
+        const sessionFile = Option.getOrUndefined(codec.decodeSessionState(state))?.sessionFile;
         if (sessionFile) {
           options.setSession({
             ...options.getSession(),

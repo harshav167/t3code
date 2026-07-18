@@ -1,4 +1,4 @@
-import { type ModelSelection, type ProviderSendTurnInput, TurnId } from "@t3tools/contracts";
+import { type ProviderSendTurnInput, TurnId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
@@ -87,9 +87,7 @@ export function makePiSessionTurnOperations(options: PiSessionOperationsOptions)
             options.setSession({ ...options.getSession(), model: plan.slug });
             options.setThinking(undefined);
           }
-          const thinking = resolvePiThinkingLevel(
-            input.modelSelection as ModelSelection | undefined,
-          );
+          const thinking = resolvePiThinkingLevel(input.modelSelection);
           if (thinking && thinking !== options.getThinking()) {
             const response = yield* options.request(
               { type: "set_thinking_level", level: thinking },

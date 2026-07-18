@@ -16,6 +16,7 @@ import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import type * as PlatformError from "effect/PlatformError";
 import { ChildProcessSpawner } from "effect/unstable/process";
+import type { EventNdjsonLogger } from "./EventNdjsonLogger.ts";
 
 import { ServerConfig } from "../../config.ts";
 import { ProviderAdapterSessionNotFoundError, ProviderAdapterValidationError } from "../Errors.ts";
@@ -23,6 +24,7 @@ import type { PiAdapterShape } from "../Services/PiAdapter.ts";
 import { makePiSession } from "../pi/PiSession.ts";
 import type { PiSessionModule } from "../pi/PiSessionTypes.ts";
 import type { MakePiRpcTransportOptions, PiRpcTransport } from "../pi/PiRpcTransport.ts";
+import { makePiCommandInventory, type PiCommandInventory } from "../pi/PiCommands.ts";
 
 const PROVIDER = ProviderDriverKind.make("pi");
 
@@ -40,6 +42,8 @@ const APPROVAL_EXTENSION_CANDIDATES = [
 export interface PiAdapterLiveOptions {
   readonly instanceId?: ProviderInstanceId;
   readonly environment?: NodeJS.ProcessEnv;
+  readonly commandInventory?: PiCommandInventory;
+  readonly nativeEventLogger?: EventNdjsonLogger;
   readonly makeTransport?: (
     options: MakePiRpcTransportOptions,
   ) => Effect.Effect<
@@ -61,6 +65,7 @@ export const makePiAdapter = Effect.fn("makePiAdapter")(function* (
   const sessions = new Map<ThreadId, PiSessionModule>();
   const transitions = yield* Semaphore.make(1);
   const runtimeEvents = yield* Queue.unbounded<ProviderRuntimeEvent>();
+  const commandInventory = options?.commandInventory ?? (yield* makePiCommandInventory());
 
   let approvalExtensionPath: string | undefined;
   for (const candidate of APPROVAL_EXTENSION_CANDIDATES) {
@@ -98,6 +103,8 @@ export const makePiAdapter = Effect.fn("makePiAdapter")(function* (
           settings,
           instanceId,
           environment: options?.environment ?? process.env,
+          commandInventory,
+          ...(options?.nativeEventLogger ? { nativeEventLogger: options.nativeEventLogger } : {}),
           ...(approvalExtensionPath ? { approvalExtensionPath } : {}),
           ...(options?.makeTransport ? { makeTransport: options.makeTransport } : {}),
           emit: (event) => Queue.offer(runtimeEvents, event).pipe(Effect.asVoid),

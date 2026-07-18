@@ -1,0 +1,81 @@
+import * as Schema from "effect/Schema";
+
+export const PiExtensionRequestSchemas = {
+  select: Schema.Struct({
+    type: Schema.Literal("extension_ui_request"),
+    id: Schema.String,
+    method: Schema.Literal("select"),
+    title: Schema.String,
+    options: Schema.Array(Schema.String),
+    timeout: Schema.optional(Schema.Number),
+  }),
+  confirm: Schema.Struct({
+    type: Schema.Literal("extension_ui_request"),
+    id: Schema.String,
+    method: Schema.Literal("confirm"),
+    title: Schema.String,
+    message: Schema.String,
+    timeout: Schema.optional(Schema.Number),
+  }),
+  input: Schema.Struct({
+    type: Schema.Literal("extension_ui_request"),
+    id: Schema.String,
+    method: Schema.Literal("input"),
+    title: Schema.String,
+    placeholder: Schema.optional(Schema.String),
+    timeout: Schema.optional(Schema.Number),
+  }),
+  editor: Schema.Struct({
+    type: Schema.Literal("extension_ui_request"),
+    id: Schema.String,
+    method: Schema.Literal("editor"),
+    title: Schema.String,
+    prefill: Schema.optional(Schema.String),
+  }),
+  cancel: Schema.Struct({
+    type: Schema.Literal("extension_ui_request"),
+    id: Schema.String,
+    method: Schema.Literal("cancel"),
+    targetId: Schema.String,
+  }),
+  notify: Schema.Struct({
+    type: Schema.Literal("extension_ui_request"),
+    id: Schema.String,
+    method: Schema.Literal("notify"),
+    message: Schema.String,
+  }),
+  setStatus: Schema.Struct({
+    type: Schema.Literal("extension_ui_request"),
+    id: Schema.String,
+    method: Schema.Literal("setStatus"),
+    statusKey: Schema.String,
+    statusText: Schema.optional(Schema.String),
+  }),
+  setWidget: Schema.Struct({
+    type: Schema.Literal("extension_ui_request"),
+    id: Schema.String,
+    method: Schema.Literal("setWidget"),
+    widgetKey: Schema.String,
+    widgetLines: Schema.optional(Schema.Array(Schema.String)),
+  }),
+  setTitle: Schema.Struct({
+    type: Schema.Literal("extension_ui_request"),
+    id: Schema.String,
+    method: Schema.Literal("setTitle"),
+    title: Schema.String,
+  }),
+  set_editor_text: Schema.Struct({
+    type: Schema.Literal("extension_ui_request"),
+    id: Schema.String,
+    method: Schema.Literal("set_editor_text"),
+    text: Schema.String,
+  }),
+  open_url: Schema.Struct({
+    type: Schema.Literal("extension_ui_request"),
+    id: Schema.String,
+    method: Schema.Literal("open_url"),
+    url: Schema.String,
+    launchUrl: Schema.optional(Schema.String),
+    instructions: Schema.optional(Schema.String),
+  }),
+} as const;

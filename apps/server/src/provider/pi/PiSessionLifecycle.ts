@@ -1,16 +1,33 @@
-import type { ApprovalRequestId, ProviderSession, ThreadId, TurnId } from "@t3tools/contracts";
+import {
+  type ApprovalRequestId,
+  ProviderDriverKind,
+  type ProviderSession,
+  type ThreadId,
+  type TurnId,
+} from "@t3tools/contracts";
 import { RuntimeRequestId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Scope from "effect/Scope";
 
-import type { ProviderAdapterRequestError } from "../Errors.ts";
+import { type ProviderAdapterRequestError, ProviderAdapterSessionClosedError } from "../Errors.ts";
 import type { PendingUserInput } from "./PiExtensionUi.ts";
 import type { PiSessionEvent } from "./PiSessionEvents.ts";
 import type { AgentSessionEvent, RpcExtensionUIResponse } from "./PiRpcProtocol.ts";
 import type { PiPendingApproval, PiTurnState } from "./PiSessionTypes.ts";
 import type { PiToolItem } from "./PiTools.ts";
+
+export function failIfPiSessionStopped(stopped: boolean, threadId: ThreadId) {
+  return stopped
+    ? Effect.fail(
+        new ProviderAdapterSessionClosedError({
+          provider: ProviderDriverKind.make("pi"),
+          threadId,
+        }),
+      )
+    : Effect.void;
+}
 
 export function piAgentEndOutcome(
   event: AgentSessionEvent,
@@ -53,6 +70,7 @@ export interface PiSessionLifecycleOptions {
     response: RpcExtensionUIResponse,
   ) => Effect.Effect<void, ProviderAdapterRequestError>;
   readonly emit: (event: PiSessionEvent) => Effect.Effect<void>;
+  readonly beforeCompleteTurn: Effect.Effect<void>;
   readonly onStopped: Effect.Effect<void>;
 }
 
@@ -61,6 +79,7 @@ export function makePiSessionLifecycle(options: PiSessionLifecycleOptions) {
     Effect.gen(function* () {
       const active = options.getTurn();
       if (!active) return;
+      yield* options.beforeCompleteTurn;
       options.setTurn(undefined);
       options.turns.push({ id: active.turnId, items: [...active.items] });
       const { activeTurnId: _, ...ready } = options.getSession();

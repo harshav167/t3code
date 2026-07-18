@@ -18,8 +18,10 @@ import type * as Scope from "effect/Scope";
 import type { ChildProcessSpawner } from "effect/unstable/process";
 
 import type { ProviderAdapterError } from "../Errors.ts";
+import type { PiCommandInventory } from "./PiCommands.ts";
 import type { PiToolItem } from "./PiTools.ts";
 import type { MakePiRpcTransportOptions, PiRpcTransport } from "./PiRpcTransport.ts";
+import type { EventNdjsonLogger } from "../Layers/EventNdjsonLogger.ts";
 
 export interface PiPendingApproval {
   readonly piId: string;
@@ -74,6 +76,8 @@ export interface MakePiSessionOptions {
   readonly settings: PiSettings;
   readonly instanceId: ProviderInstanceId;
   readonly environment: NodeJS.ProcessEnv;
+  readonly commandInventory: PiCommandInventory;
+  readonly nativeEventLogger?: EventNdjsonLogger;
   readonly approvalExtensionPath?: string;
   readonly makeTransport?: (
     options: MakePiRpcTransportOptions,

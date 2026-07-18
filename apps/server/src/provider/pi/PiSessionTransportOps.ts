@@ -9,7 +9,7 @@ import type { PiRpcTransport } from "./PiRpcTransport.ts";
 export function makePiSessionTransportOps(options: {
   readonly provider: ProviderDriverKind;
   readonly nextUuid: Effect.Effect<string>;
-  readonly getTransport: () => PiRpcTransport;
+  readonly getTransport: () => PiRpcTransport | undefined;
 }) {
   const request = (
     command: RpcCommand,
@@ -18,26 +18,37 @@ export function makePiSessionTransportOps(options: {
   ): Effect.Effect<RpcResponse | undefined, ProviderAdapterRequestError> =>
     Effect.gen(function* () {
       const id = requestId ?? `pi-${command.type}-${yield* options.nextUuid}`;
-      return yield* options
-        .getTransport()
-        .request(command, id, timeout)
-        .pipe(
-          Effect.mapError(
-            (cause) =>
-              new ProviderAdapterRequestError({
-                provider: options.provider,
-                method: command.type,
-                detail: cause.detail,
-                cause,
-              }),
-          ),
-        );
+      const transport = options.getTransport();
+      if (transport === undefined) {
+        return yield* new ProviderAdapterRequestError({
+          provider: options.provider,
+          method: command.type,
+          detail: "The Pi RPC transport has not started.",
+        });
+      }
+      return yield* transport.request(command, id, timeout).pipe(
+        Effect.mapError(
+          (cause) =>
+            new ProviderAdapterRequestError({
+              provider: options.provider,
+              method: command.type,
+              detail: cause.detail,
+              cause,
+            }),
+        ),
+      );
     });
   const writeExtension = (response: RpcExtensionUIResponse) =>
-    options
-      .getTransport()
-      .writeExtensionResponse(response)
-      .pipe(
+    Effect.gen(function* () {
+      const transport = options.getTransport();
+      if (transport === undefined) {
+        return yield* new ProviderAdapterRequestError({
+          provider: options.provider,
+          method: "extension_ui_response",
+          detail: "The Pi RPC transport has not started.",
+        });
+      }
+      return yield* transport.writeExtensionResponse(response).pipe(
         Effect.mapError(
           (cause) =>
             new ProviderAdapterRequestError({
@@ -48,5 +59,6 @@ export function makePiSessionTransportOps(options: {
             }),
         ),
       );
+    });
   return { request, writeExtension } as const;
 }

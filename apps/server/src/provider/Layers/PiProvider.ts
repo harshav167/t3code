@@ -22,8 +22,9 @@ import {
   providerModelsFromSettings,
   spawnAndCollect,
 } from "../providerSnapshot.ts";
-import { extractAvailableModels, piModelInfoToServerModel } from "../pi/PiModels.ts";
-import { makePiRpcTransport } from "../pi/PiRpcTransport.ts";
+import { piModelInfoToServerModel } from "../pi/PiModels.ts";
+import type { PiCommandInventory } from "../pi/PiCommands.ts";
+import { discoverPiRpc, type PiRpcDiscoveryResult } from "../pi/PiRpcDiscovery.ts";
 
 const PROVIDER = ProviderDriverKind.make("pi");
 
@@ -58,32 +59,26 @@ const runPiVersion = (piSettings: PiSettings, environment: NodeJS.ProcessEnv) =>
     });
   });
 
-/** Discover models via a short-lived `pi --mode rpc` session; `[]` on any failure. */
-export const discoverPiModelsViaRpc = Effect.fn("discoverPiModelsViaRpc")(
+export const discoverPiProviderContextViaRpc = Effect.fn("discoverPiProviderContextViaRpc")(
   function* (piSettings: PiSettings, cwd: string, environment: NodeJS.ProcessEnv) {
-    const transport = yield* makePiRpcTransport({
-      binaryPath: piSettings.binaryPath || "pi",
-      args: ["--mode", "rpc", "--no-session"],
-      cwd,
-      env: environment,
-      onExit: Effect.void,
-    });
-    const response = yield* transport.request(
-      { type: "get_available_models" },
-      "pi-model-discovery",
-      PI_MODEL_DISCOVERY_TIMEOUT_MS,
-    );
-    return extractAvailableModels(response).map(piModelInfoToServerModel);
+    return yield* discoverPiRpc(piSettings, cwd, environment);
   },
   Effect.scoped,
   Effect.timeoutOption(PI_MODEL_DISCOVERY_TIMEOUT_MS),
-  Effect.map(Option.getOrElse(() => [] as ReadonlyArray<ServerProviderModel>)),
+  Effect.map(Option.getOrUndefined),
   Effect.catchCause((cause) =>
-    Effect.logWarning("Pi model discovery failed", { cause }).pipe(
-      Effect.as([] as ReadonlyArray<ServerProviderModel>),
-    ),
+    Effect.logWarning("Pi model discovery failed", { cause }).pipe(Effect.as(undefined)),
   ),
 );
+
+export const discoverPiModelsViaRpc = Effect.fn("discoverPiModelsViaRpc")(function* (
+  piSettings: PiSettings,
+  cwd: string,
+  environment: NodeJS.ProcessEnv,
+) {
+  const discovered = yield* discoverPiProviderContextViaRpc(piSettings, cwd, environment);
+  return discovered?.models.map(piModelInfoToServerModel) ?? [];
+});
 
 const modelsFromSettings = (
   piSettings: PiSettings,
@@ -132,6 +127,7 @@ export const checkPiProviderStatus = Effect.fn("checkPiProviderStatus")(function
   piSettings: PiSettings,
   cwd: string,
   environment: NodeJS.ProcessEnv = process.env,
+  commandInventory?: PiCommandInventory,
 ) {
   const checkedAt = yield* nowIso;
   const fallbackModels = modelsFromSettings(piSettings, []);
@@ -234,11 +230,19 @@ export const checkPiProviderStatus = Effect.fn("checkPiProviderStatus")(function
     });
   }
 
-  const discovered = yield* discoverPiModelsViaRpc(piSettings, cwd, environment);
-  const models = modelsFromSettings(piSettings, discovered);
+  const discovery: PiRpcDiscoveryResult | undefined = yield* discoverPiProviderContextViaRpc(
+    piSettings,
+    cwd,
+    environment,
+  );
+  if (discovery !== undefined && commandInventory !== undefined) {
+    yield* commandInventory.replace(discovery.commands);
+  }
+  const discoveredModels = discovery?.models.map(piModelInfoToServerModel) ?? [];
+  const models = modelsFromSettings(piSettings, discoveredModels);
 
   // no auth query in pi; get_available_models only lists once a key is configured in ~/.pi/agent
-  const authenticated = discovered.length > 0;
+  const authenticated = discoveredModels.length > 0;
 
   return buildServerProvider({
     presentation: PI_PRESENTATION,

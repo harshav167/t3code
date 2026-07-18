@@ -1,6 +1,7 @@
 import type { PiSettings, ProviderSessionStartInput, ThreadId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as Option from "effect/Option";
 import * as Scope from "effect/Scope";
 import type * as PlatformError from "effect/PlatformError";
 import { ChildProcessSpawner } from "effect/unstable/process";
@@ -10,14 +11,16 @@ import {
   ProviderAdapterRequestError,
   type ProviderAdapterError,
 } from "../Errors.ts";
+import { type PiThinkingLevel, type RpcCommand } from "./PiModels.ts";
+import type { PiCommandInventory } from "./PiCommands.ts";
 import {
-  extractSessionFile,
-  piResponseHasCommand,
+  decodeSessionStateFor,
   piResponseSucceeded,
-  type PiRpcDialect,
-  type PiThinkingLevel,
-  type RpcCommand,
-} from "./PiModels.ts";
+  type PiRpcDialectCodec,
+} from "./PiRpcDialect.ts";
+import { buildPiRpcLaunch, resolvePiApprovalLaunch } from "./PiRpcLaunch.ts";
+import { makeOmpDialectCodec } from "./PiRpcOmpDialect.ts";
+import { makePiDialectCodec } from "./PiRpcPiDialect.ts";
 import {
   makePiRpcTransport,
   type MakePiRpcTransportOptions,
@@ -26,28 +29,7 @@ import {
 
 const APPROVAL_SENTINEL = "t3-approval-gate";
 
-export function resolvePiApprovalLaunch(
-  binaryPath: string,
-  runtimeMode: ProviderSessionStartInput["runtimeMode"],
-):
-  | { readonly kind: "none" }
-  | { readonly kind: "pi-extension" }
-  | { readonly kind: "omp-native"; readonly mode: "always-ask" | "write" } {
-  if (runtimeMode === "full-access") return { kind: "none" };
-  const executable = binaryPath.split(/[\\/]/u).at(-1)?.toLowerCase();
-  if (
-    executable === "omp" ||
-    executable === "omp.exe" ||
-    executable === "oh-my-pi" ||
-    executable === "oh-my-pi.exe"
-  ) {
-    return {
-      kind: "omp-native",
-      mode: runtimeMode === "approval-required" ? "always-ask" : "write",
-    };
-  }
-  return { kind: "pi-extension" };
-}
+export { resolvePiApprovalLaunch } from "./PiRpcLaunch.ts";
 
 export interface StartPiSessionOptions {
   readonly input: ProviderSessionStartInput;
@@ -57,6 +39,7 @@ export interface StartPiSessionOptions {
   readonly model: string | undefined;
   readonly thinking: PiThinkingLevel | undefined;
   readonly approvalExtensionPath?: string;
+  readonly commandInventory: PiCommandInventory;
   readonly scope: Scope.Closeable;
   readonly spawner: ChildProcessSpawner.ChildProcessSpawner["Service"];
   readonly nextId: Effect.Effect<string>;
@@ -76,44 +59,40 @@ export const startPiSessionTransport = Effect.fn("startPiSessionTransport")(func
   {
     readonly transport: PiRpcTransport;
     readonly sessionFile: string | undefined;
-    readonly dialect: PiRpcDialect;
+    readonly codec: PiRpcDialectCodec;
   },
   ProviderAdapterError
 > {
   const threadId: ThreadId = options.input.threadId;
-  const args = ["--mode", "rpc"];
-  const resume = options.input.resumeCursor;
-  if (
-    resume &&
-    typeof resume === "object" &&
-    "sessionFile" in resume &&
-    typeof resume.sessionFile === "string"
-  ) {
-    args.push("--session", resume.sessionFile);
-  }
-  if (options.model) args.push("--model", options.model);
-  if (options.thinking) args.push("--thinking", options.thinking);
-  const binaryPath = options.settings.binaryPath || "pi";
-  const approvalLaunch = resolvePiApprovalLaunch(binaryPath, options.input.runtimeMode);
-  if (approvalLaunch.kind === "pi-extension" && !options.approvalExtensionPath) {
+  const launch = buildPiRpcLaunch({
+    settings: options.settings,
+    environment: options.environment,
+    extensionPaths: [],
+    purpose: {
+      kind: "session",
+      runtimeMode: options.input.runtimeMode,
+      ...(options.input.resumeCursor !== undefined
+        ? { resumeCursor: options.input.resumeCursor }
+        : {}),
+      ...(options.model !== undefined ? { model: options.model } : {}),
+      ...(options.thinking !== undefined ? { thinking: options.thinking } : {}),
+      ...(options.approvalExtensionPath !== undefined
+        ? { approvalExtensionPath: options.approvalExtensionPath }
+        : {}),
+    },
+  });
+  if (launch.kind !== "ok") {
     return yield* new ProviderAdapterProcessError({
       provider: "pi",
       threadId,
       detail: "Tool approval is required but the bundled Pi approval gate is unavailable.",
     });
   }
-  let environment = options.environment;
-  if (approvalLaunch.kind === "omp-native") {
-    args.push("--approval-mode", approvalLaunch.mode);
-  } else if (approvalLaunch.kind === "pi-extension" && options.approvalExtensionPath) {
-    args.push("--extension", options.approvalExtensionPath);
-    environment = { ...environment, T3_PI_APPROVAL_MODE: options.input.runtimeMode };
-  }
   const transport = yield* (options.makeTransport ?? makePiRpcTransport)({
-    binaryPath,
-    args,
+    binaryPath: launch.launch.binaryPath,
+    args: launch.launch.args,
     cwd: options.cwd,
-    env: environment,
+    env: launch.launch.environment,
     onExit: options.onExit,
   }).pipe(
     Effect.provideService(Scope.Scope, options.scope),
@@ -145,15 +124,21 @@ export const startPiSessionTransport = Effect.fn("startPiSessionTransport")(func
           ),
         );
       });
-    const sessionFile = extractSessionFile(yield* request({ type: "get_state" }, 5_000));
+    const sessionState = decodeSessionStateFor(yield* request({ type: "get_state" }, 5_000));
+    const sessionFile = Option.getOrUndefined(sessionState)?.sessionFile;
     const availableCommands = yield* request({ type: "get_available_commands" }, 5_000);
-    const dialect: PiRpcDialect = piResponseSucceeded(availableCommands, "get_available_commands")
-      ? "omp"
-      : "pi";
-    if (approvalLaunch.kind === "pi-extension") {
-      const commands =
-        dialect === "omp" ? availableCommands : yield* request({ type: "get_commands" }, 5_000);
-      if (!piResponseHasCommand(commands, APPROVAL_SENTINEL)) {
+    const codec = piResponseSucceeded(availableCommands, "get_available_commands")
+      ? makeOmpDialectCodec()
+      : makePiDialectCodec();
+    const commandResponse =
+      codec.kind === "omp" ? availableCommands : yield* request(codec.listCommandsCommand, 5_000);
+    const commands = codec.decodeCommands(commandResponse);
+    yield* options.commandInventory.replace(commands);
+    if (
+      resolvePiApprovalLaunch(launch.launch.binaryPath, options.input.runtimeMode).kind ===
+      "pi-extension"
+    ) {
+      if (!commands.some((command) => command.name === APPROVAL_SENTINEL)) {
         yield* transport.kill;
         return yield* new ProviderAdapterProcessError({
           provider: "pi",
@@ -162,6 +147,6 @@ export const startPiSessionTransport = Effect.fn("startPiSessionTransport")(func
         });
       }
     }
-    return { transport, sessionFile, dialect };
+    return { transport, sessionFile, codec };
   }).pipe(Effect.onError(() => Scope.close(options.scope, Exit.void).pipe(Effect.ignore)));
 });

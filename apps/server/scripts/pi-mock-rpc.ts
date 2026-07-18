@@ -52,7 +52,7 @@ rl.on("line", (line: string) => {
           write({ type: "agent_start" });
           write({
             type: "message_update",
-            assistantMessageEvent: { type: "text_delta", delta: replyText },
+            assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: replyText },
           });
           lastAssistantText = replyText;
           write({ type: "agent_end", messages: [], willRetry: false });
@@ -61,7 +61,7 @@ rl.on("line", (line: string) => {
       }
       write({
         type: "message_update",
-        assistantMessageEvent: { type: "text_delta", delta: replyText },
+        assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: replyText },
       });
       lastAssistantText = replyText;
       write({ type: "message_end", message: {} });

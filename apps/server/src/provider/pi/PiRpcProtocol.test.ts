@@ -52,7 +52,7 @@ describe("decodePiStdoutLine", () => {
   it("decodes OMP control, state, branch, and extension UI frames", () => {
     for (const line of [
       '{"type":"ready"}',
-      '{"type":"available_commands_update","commands":[{"name":"t3-approval-gate"}]}',
+      '{"type":"available_commands_update","commands":[{"name":"t3-approval-gate","source":"extension"}]}',
       '{"type":"prompt_result","id":"prompt-1","agentInvoked":true}',
       '{"type":"command_output","text":"ok"}',
       '{"type":"session_info_update","sessionId":"omp-1","title":"Test"}',
@@ -138,7 +138,8 @@ describe("decodePiStdoutLine", () => {
       _tag: "FatalProtocolError",
     });
     expect(decodePiStdoutLine('{"type":"prompt_result","agentInvoked":false}')).toMatchObject({
-      _tag: "FatalProtocolError",
+      _tag: "Message",
+      message: { _tag: "control" },
     });
     expect(decodePiStdoutLine("{not-json}")).toMatchObject({ _tag: "FatalProtocolError" });
     expect(

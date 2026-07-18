@@ -12,21 +12,24 @@ describe("piContentDelta", () => {
       piContentDelta(
         event({
           type: "message_update",
-          assistantMessageEvent: { type: "text_delta", delta: "hello" },
+          assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: "hello" },
         }),
       ),
-    ).toEqual({ streamKind: "assistant_text", delta: "hello" });
+    ).toEqual({ streamKind: "assistant_text", delta: "hello", contentIndex: 0 });
     expect(
       piContentDelta(
         event({
           type: "message_update",
-          assistantMessageEvent: { type: "thinking_delta", delta: "why" },
+          assistantMessageEvent: { type: "thinking_delta", contentIndex: 1, delta: "why" },
         }),
       ),
-    ).toEqual({ streamKind: "reasoning_text", delta: "why" });
+    ).toEqual({ streamKind: "reasoning_text", delta: "why", contentIndex: 1 });
     expect(
       piContentDelta(
-        event({ type: "message_update", assistantMessageEvent: { type: "toolcall_delta" } }),
+        event({
+          type: "message_update",
+          assistantMessageEvent: { type: "toolcall_delta", contentIndex: 2 },
+        }),
       ),
     ).toBeNull();
   });

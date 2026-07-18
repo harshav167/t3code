@@ -97,6 +97,30 @@ const AvailableCommandsResponse = Schema.Struct({
   success: Schema.Literal(true),
   data: Schema.Struct({ commands: Schema.Array(Schema.Struct({ name: Schema.String })) }),
 });
+const SessionStatsResponse = Schema.Struct({
+  type: Schema.Literal("response"),
+  id: Schema.String,
+  command: Schema.Literal("get_session_stats"),
+  success: Schema.Literal(true),
+  data: Schema.Struct({
+    toolCalls: Schema.Number,
+    tokens: Schema.Struct({
+      input: Schema.Number,
+      output: Schema.Number,
+      reasoning: Schema.optional(Schema.Number),
+      cacheRead: Schema.Number,
+      cacheWrite: Schema.Number,
+      total: Schema.Number,
+    }),
+    contextUsage: Schema.optional(
+      Schema.Struct({
+        tokens: Schema.NullOr(Schema.Number),
+        contextWindow: Schema.Number,
+        percent: Schema.optional(Schema.NullOr(Schema.Number)),
+      }),
+    ),
+  }),
+});
 const BranchMessagesResponse = Schema.Struct({
   type: Schema.Literal("response"),
   id: Schema.String,
@@ -139,6 +163,8 @@ export function piResponseSchema(command: string, success: boolean): Schema.Top 
       return CommandsResponse;
     case "get_available_commands":
       return AvailableCommandsResponse;
+    case "get_session_stats":
+      return SessionStatsResponse;
     case "get_branch_messages":
       return BranchMessagesResponse;
     case "branch":

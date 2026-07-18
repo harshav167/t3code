@@ -1,28 +1,28 @@
-import {
-  ApprovalRequestId,
-  type ProviderRuntimeEvent,
-  RuntimeItemId,
-  RuntimeRequestId,
-} from "@t3tools/contracts";
+import { ApprovalRequestId, type ProviderRuntimeEvent, RuntimeItemId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 
 import type { ProviderAdapterRequestError } from "../Errors.ts";
+import type { PiCommandInventory } from "./PiCommands.ts";
+import { handlePiCompactionEvent } from "./PiCompaction.ts";
 import { piContentDelta } from "./PiContent.ts";
 import { handlePiControlFrame } from "./PiSessionControl.ts";
-import { buildPiUserInputQuestion, type PendingUserInput } from "./PiExtensionUi.ts";
+import type { PendingUserInput } from "./PiExtensionUi.ts";
+import { handlePiExtensionUiRequest } from "./PiExtensionUiEvents.ts";
 import type {
   AgentSessionEvent,
   PiStdoutMessage,
-  RpcExtensionUIRequest,
   RpcExtensionUIResponse,
 } from "./PiRpcProtocol.ts";
+import type { PiRpcDialectCodec } from "./PiRpcDialect.ts";
 import { piAgentEndOutcome } from "./PiSessionLifecycle.ts";
+import { makePiReasoningLifecycle } from "./PiReasoning.ts";
 import type { PiPendingApproval, PiTurnState } from "./PiSessionTypes.ts";
 import {
-  classifyPiApprovalRequestType,
   classifyPiToolItemType,
   piToolOutputStreamKind,
+  piToolError,
   piToolResultText,
+  piToolTitle,
   summarizePiToolArgs,
 } from "./PiTools.ts";
 export type PiSessionEvent = Omit<
@@ -33,6 +33,8 @@ export type PiSessionEvent = Omit<
 export interface MakePiSessionMessageHandlerOptions {
   readonly nextRequestId: Effect.Effect<ApprovalRequestId>;
   readonly getTurn: () => PiTurnState | undefined;
+  readonly getCodec: () => PiRpcDialectCodec;
+  readonly commandInventory: PiCommandInventory;
   readonly pendingApprovals: Map<ApprovalRequestId, PiPendingApproval>;
   readonly pendingInputs: Map<ApprovalRequestId, PendingUserInput>;
   readonly sessionApprovals: Set<string>;
@@ -45,107 +47,23 @@ export interface MakePiSessionMessageHandlerOptions {
     state: "completed" | "failed",
     errorMessage?: string,
   ) => Effect.Effect<void>;
+  readonly refreshUsage: (turn: PiTurnState) => Effect.Effect<void>;
+  readonly applyConfig: (
+    model: string | undefined,
+    thinking: import("./PiRpcTypes.ts").PiThinkingLevel | undefined,
+  ) => Effect.Effect<void>;
 }
 
 export function makePiSessionMessageHandler(options: MakePiSessionMessageHandlerOptions) {
-  const handleExtension = (request: RpcExtensionUIRequest) =>
-    Effect.gen(function* () {
-      if (request.method === "cancel") {
-        const approval = [...options.pendingApprovals].find(
-          ([, pending]) => pending.piId === request.targetId,
-        );
-        if (approval) {
-          const [requestId] = approval;
-          options.pendingApprovals.delete(requestId);
-          const turn = options.getTurn();
-          yield* options.emit({
-            type: "request.resolved",
-            ...(turn ? { turnId: turn.turnId } : {}),
-            requestId: RuntimeRequestId.make(requestId),
-            payload: { requestType: approval[1].requestType, decision: "cancel" },
-          });
-          return;
-        }
-        const input = [...options.pendingInputs].find(
-          ([, pending]) => pending.piId === request.targetId,
-        );
-        if (input) {
-          const [requestId] = input;
-          options.pendingInputs.delete(requestId);
-          const turn = options.getTurn();
-          yield* options.emit({
-            type: "user-input.resolved",
-            ...(turn ? { turnId: turn.turnId } : {}),
-            requestId: RuntimeRequestId.make(requestId),
-            payload: { answers: {} },
-          });
-        }
-        return;
-      }
-      if (
-        request.method !== "confirm" &&
-        request.method !== "select" &&
-        request.method !== "input" &&
-        request.method !== "editor"
-      ) {
-        return;
-      }
-      const requestId = yield* options.nextRequestId;
-      const turn = options.getTurn();
-      if (request.method === "confirm") {
-        const requestType = classifyPiApprovalRequestType(request.title);
-        const detail = request.message ? `${request.title}\n${request.message}` : request.title;
-        const sessionApprovalKey = `${requestType}:${detail}`;
-        if (options.sessionApprovals.has(sessionApprovalKey)) {
-          const delivered = yield* options
-            .writeExtension({ type: "extension_ui_response", id: request.id, confirmed: true })
-            .pipe(
-              Effect.as(true),
-              Effect.orElseSucceed(() => false),
-            );
-          if (delivered) return;
-        }
-        options.pendingApprovals.set(requestId, {
-          piId: request.id,
-          requestType,
-          sessionApprovalKey,
-        });
-        yield* options.emit({
-          type: "request.opened",
-          ...(turn ? { turnId: turn.turnId } : {}),
-          requestId: RuntimeRequestId.make(requestId),
-          payload: { requestType, detail: detail.slice(0, 2_000), args: request },
-          raw: { source: "pi.rpc.extension-ui", method: request.method, payload: request },
-        });
-        return;
-      }
-      const questionId = String(requestId);
-      const projected = buildPiUserInputQuestion({
-        questionId,
-        method: request.method,
-        title: request.title,
-        ...(request.method === "select" ? { options: request.options } : {}),
-      });
-      options.pendingInputs.set(requestId, {
-        piId: request.id,
-        questionId,
-        method: request.method,
-        ...(projected.numberedOptions ? { numberedOptions: projected.numberedOptions } : {}),
-      });
-      yield* options.emit({
-        type: "user-input.requested",
-        ...(turn ? { turnId: turn.turnId } : {}),
-        requestId: RuntimeRequestId.make(requestId),
-        payload: { questions: [projected.question] },
-        raw: { source: "pi.rpc.extension-ui", method: request.method, payload: request },
-      });
-    });
+  const reasoning = makePiReasoningLifecycle(options);
 
   const handleEvent = (event: AgentSessionEvent) =>
     Effect.gen(function* () {
+      if (yield* handlePiCompactionEvent(options, event)) return;
       const turn = options.getTurn();
       const raw = { raw: { source: "pi.rpc.event", method: event.type, payload: event } } as const;
       if (event.type === "message_update" && turn) {
+        if (yield* reasoning.handle(event)) return;
         const content = piContentDelta(event);
         if (content) {
           yield* options.emit({
@@ -166,7 +84,12 @@ export function makePiSessionMessageHandler(options: MakePiSessionMessageHandler
           type: "item.started",
           turnId: turn.turnId,
           itemId,
-          payload: { itemType, title: event.toolName, ...(detail ? { detail } : {}) },
+          payload: {
+            itemType,
+            title: piToolTitle(event.toolName, event.args),
+            ...(detail !== undefined ? { detail: event.toolName } : {}),
+            data: { toolName: event.toolName, input: event.args },
+          },
           ...raw,
         });
         return;
@@ -214,15 +137,23 @@ export function makePiSessionMessageHandler(options: MakePiSessionMessageHandler
           item.status = event.isError ? "failed" : "completed";
         }
         const detail = summarizePiToolArgs(item?.args);
+        const error = event.isError ? piToolError(event.result) : undefined;
         yield* options.emit({
           type: "item.completed",
           turnId: turn.turnId,
           itemId,
           payload: {
             itemType: classifyPiToolItemType(event.toolName),
-            title: event.toolName,
+            title: piToolTitle(event.toolName, item?.args),
             status: event.isError ? "failed" : "completed",
-            ...(detail ? { detail } : {}),
+            ...(detail !== undefined ? { detail: event.toolName } : {}),
+            data: {
+              toolName: event.toolName,
+              input: item?.args,
+              output,
+              result: event.result,
+              ...(error !== undefined ? { error } : {}),
+            },
           },
           ...raw,
         });
@@ -230,21 +161,24 @@ export function makePiSessionMessageHandler(options: MakePiSessionMessageHandler
       }
       const outcome = piAgentEndOutcome(event);
       if (outcome) {
+        yield* reasoning.completeOpen;
+        if (outcome.state === "completed" && turn) yield* options.refreshUsage(turn);
         yield* options.settlePending;
         yield* options.completeTurn(outcome.state, outcome.errorMessage);
       }
     });
 
-  return (message: PiStdoutMessage): Effect.Effect<void> => {
+  const handle = (message: PiStdoutMessage): Effect.Effect<void> => {
     switch (message._tag) {
       case "event":
         return handleEvent(message.event);
       case "extension-ui":
-        return handleExtension(message.request);
+        return handlePiExtensionUiRequest(options, message.request);
       case "control":
         return handlePiControlFrame(options, message.frame);
       case "response":
         return Effect.void;
     }
   };
+  return { handle, completeReasoning: reasoning.completeOpen, clearReasoning: reasoning.clear };
 }

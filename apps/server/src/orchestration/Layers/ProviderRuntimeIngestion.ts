@@ -38,6 +38,9 @@ import {
   type ProviderRuntimeIngestionShape,
 } from "../Services/ProviderRuntimeIngestion.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
+import { projectProviderReasoningActivity } from "../ProviderReasoningProjection.ts";
+import { projectProviderToolActivity } from "../ProviderToolProjection.ts";
+import { projectProviderContextCompactionActivity } from "../ProviderContextCompactionProjection.ts";
 
 const providerTurnKey = (threadId: ThreadId, turnId: TurnId) => `${threadId}:${turnId}`;
 const providerTaskKey = (threadId: ThreadId, taskId: string) => `${threadId}:${taskId}`;
@@ -308,14 +311,19 @@ function requestKindFromCanonicalRequestType(
 
 export function runtimeEventToActivities(
   event: ProviderRuntimeEvent,
+  existingActivities: ReadonlyArray<OrchestrationThreadActivity> = [],
   taskTitle?: string,
 ): ReadonlyArray<OrchestrationThreadActivity> {
-  const maybeSequence = (() => {
-    const eventWithSequence = event as ProviderRuntimeEvent & { sessionSequence?: number };
-    return eventWithSequence.sessionSequence !== undefined
-      ? { sequence: eventWithSequence.sessionSequence }
+  const reasoning = projectProviderReasoningActivity(event, existingActivities);
+  if (reasoning !== undefined) return [reasoning];
+  const compaction = projectProviderContextCompactionActivity(event, existingActivities);
+  if (compaction !== undefined) return [compaction];
+  const tool = projectProviderToolActivity(event, existingActivities);
+  if (tool !== undefined) return [tool];
+  const maybeSequence =
+    "sessionSequence" in event && typeof event.sessionSequence === "number"
+      ? { sequence: event.sessionSequence }
       : {};
-  })();
   switch (event.type) {
     case "request.opened": {
       if (event.payload.requestType === "tool_user_input") {
@@ -1764,7 +1772,15 @@ const make = Effect.gen(function* () {
         }
       }
 
-      const activities = runtimeEventToActivities(event, taskTitle);
+      const needsProjectionState =
+        event.type === "item.started" ||
+        event.type === "item.updated" ||
+        event.type === "item.completed" ||
+        event.type === "content.delta";
+      const existingActivities = needsProjectionState
+        ? ((yield* getLoadedThreadDetail())?.activities ?? [])
+        : [];
+      const activities = runtimeEventToActivities(event, existingActivities, taskTitle);
       yield* Effect.forEach(activities, (activity) =>
         providerCommandId(event, "thread-activity-append").pipe(
           Effect.flatMap((commandId) =>

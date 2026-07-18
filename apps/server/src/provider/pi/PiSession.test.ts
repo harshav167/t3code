@@ -84,7 +84,15 @@ const makeHarness = Effect.gen(function* () {
       type: "response",
       command: "get_commands",
       success: true,
-      data: { commands: [{ name: "t3-approval-gate" }] },
+      data: {
+        commands: [
+          {
+            name: "t3-approval-gate",
+            source: "extension",
+            sourceInfo: { path: "/tmp/t3-approvals.ts", scope: "user" },
+          },
+        ],
+      },
     }),
   );
   for (const command of ["prompt", "steer", "abort"] as const) {
@@ -905,7 +913,7 @@ it.layer(TestLayer)("PiSession lifecycle", (it) => {
           type: "response",
           command: "get_available_commands",
           success: true,
-          data: { commands: [{ name: "t3-approval-gate" }] },
+          data: { commands: [{ name: "t3-approval-gate", source: "extension" }] },
         }),
       );
       const threadId = ThreadId.make("omp-branch-rollback");

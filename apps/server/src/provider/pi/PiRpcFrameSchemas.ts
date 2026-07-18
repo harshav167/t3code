@@ -1,86 +1,8 @@
 import * as Schema from "effect/Schema";
 
-const ObjectEnvelope = Schema.Struct({ type: Schema.String });
+export { PiExtensionRequestSchemas } from "./PiRpcExtensionSchemas.ts";
 
-export const PiExtensionRequestSchemas = {
-  select: Schema.Struct({
-    type: Schema.Literal("extension_ui_request"),
-    id: Schema.String,
-    method: Schema.Literal("select"),
-    title: Schema.String,
-    options: Schema.Array(Schema.String),
-    timeout: Schema.optional(Schema.Number),
-  }),
-  confirm: Schema.Struct({
-    type: Schema.Literal("extension_ui_request"),
-    id: Schema.String,
-    method: Schema.Literal("confirm"),
-    title: Schema.String,
-    message: Schema.String,
-    timeout: Schema.optional(Schema.Number),
-  }),
-  input: Schema.Struct({
-    type: Schema.Literal("extension_ui_request"),
-    id: Schema.String,
-    method: Schema.Literal("input"),
-    title: Schema.String,
-    placeholder: Schema.optional(Schema.String),
-    timeout: Schema.optional(Schema.Number),
-  }),
-  editor: Schema.Struct({
-    type: Schema.Literal("extension_ui_request"),
-    id: Schema.String,
-    method: Schema.Literal("editor"),
-    title: Schema.String,
-    prefill: Schema.optional(Schema.String),
-  }),
-  cancel: Schema.Struct({
-    type: Schema.Literal("extension_ui_request"),
-    id: Schema.String,
-    method: Schema.Literal("cancel"),
-    targetId: Schema.String,
-  }),
-  notify: Schema.Struct({
-    type: Schema.Literal("extension_ui_request"),
-    id: Schema.String,
-    method: Schema.Literal("notify"),
-    message: Schema.String,
-  }),
-  setStatus: Schema.Struct({
-    type: Schema.Literal("extension_ui_request"),
-    id: Schema.String,
-    method: Schema.Literal("setStatus"),
-    statusKey: Schema.String,
-    statusText: Schema.optional(Schema.String),
-  }),
-  setWidget: Schema.Struct({
-    type: Schema.Literal("extension_ui_request"),
-    id: Schema.String,
-    method: Schema.Literal("setWidget"),
-    widgetKey: Schema.String,
-    widgetLines: Schema.optional(Schema.Array(Schema.String)),
-  }),
-  setTitle: Schema.Struct({
-    type: Schema.Literal("extension_ui_request"),
-    id: Schema.String,
-    method: Schema.Literal("setTitle"),
-    title: Schema.String,
-  }),
-  set_editor_text: Schema.Struct({
-    type: Schema.Literal("extension_ui_request"),
-    id: Schema.String,
-    method: Schema.Literal("set_editor_text"),
-    text: Schema.String,
-  }),
-  open_url: Schema.Struct({
-    type: Schema.Literal("extension_ui_request"),
-    id: Schema.String,
-    method: Schema.Literal("open_url"),
-    url: Schema.String,
-    launchUrl: Schema.optional(Schema.String),
-    instructions: Schema.optional(Schema.String),
-  }),
-} as const;
+const ObjectEnvelope = Schema.Struct({ type: Schema.String });
 
 export const PiEventSchemas = {
   agent_start: ObjectEnvelope,
@@ -101,11 +23,21 @@ export const PiEventSchemas = {
     type: Schema.Literal("message_update"),
     message: Schema.optional(Schema.Unknown),
     assistantMessageEvent: Schema.Union([
-      Schema.Struct({ type: Schema.Literal("text_delta"), delta: Schema.String }),
-      Schema.Struct({ type: Schema.Literal("thinking_delta"), delta: Schema.String }),
+      Schema.Struct({
+        type: Schema.Literal("text_delta"),
+        contentIndex: Schema.Number,
+        delta: Schema.String,
+      }),
+      Schema.Struct({
+        type: Schema.Literal("thinking_delta"),
+        contentIndex: Schema.Number,
+        delta: Schema.String,
+      }),
+      Schema.Struct({
+        type: Schema.Literals(["start", "done", "error"]),
+      }),
       Schema.Struct({
         type: Schema.Literals([
-          "start",
           "text_start",
           "text_end",
           "thinking_start",
@@ -113,9 +45,8 @@ export const PiEventSchemas = {
           "toolcall_start",
           "toolcall_delta",
           "toolcall_end",
-          "done",
-          "error",
         ]),
+        contentIndex: Schema.Number,
       }),
     ]),
   }),
@@ -187,11 +118,28 @@ export const PiControlFrameSchemas = {
   ready: Schema.Struct({ type: Schema.Literal("ready") }),
   available_commands_update: Schema.Struct({
     type: Schema.Literal("available_commands_update"),
-    commands: Schema.Array(Schema.Struct({ name: Schema.String })),
+    commands: Schema.Array(
+      Schema.Struct({
+        name: Schema.String,
+        aliases: Schema.optional(Schema.Array(Schema.String)),
+        description: Schema.optional(Schema.String),
+        input: Schema.optional(Schema.Struct({ hint: Schema.optional(Schema.String) })),
+        subcommands: Schema.optional(
+          Schema.Array(
+            Schema.Struct({
+              name: Schema.String,
+              description: Schema.optional(Schema.String),
+              usage: Schema.optional(Schema.String),
+            }),
+          ),
+        ),
+        source: Schema.String,
+      }),
+    ),
   }),
   prompt_result: Schema.Struct({
     type: Schema.Literal("prompt_result"),
-    id: Schema.String,
+    id: Schema.optional(Schema.String),
     agentInvoked: Schema.Boolean,
   }),
   subagent_lifecycle: Schema.Struct({
@@ -220,14 +168,31 @@ export const PiControlFrameSchemas = {
     model: Schema.optional(Schema.Unknown),
     thinkingLevel: Schema.optional(Schema.String),
   }),
-  auto_compaction_start: ObjectEnvelope,
-  auto_compaction_end: ObjectEnvelope,
+  auto_compaction_start: Schema.Struct({
+    type: Schema.Literal("auto_compaction_start"),
+    reason: Schema.String,
+    action: Schema.String,
+  }),
+  auto_compaction_end: Schema.Struct({
+    type: Schema.Literal("auto_compaction_end"),
+    action: Schema.optional(Schema.String),
+    result: Schema.optional(Schema.Unknown),
+    aborted: Schema.Boolean,
+    willRetry: Schema.Boolean,
+    errorMessage: Schema.optional(Schema.String),
+    skipped: Schema.optional(Schema.Boolean),
+  }),
   retry_fallback_applied: ObjectEnvelope,
   retry_fallback_succeeded: ObjectEnvelope,
   ttsr_triggered: ObjectEnvelope,
   todo_reminder: ObjectEnvelope,
   todo_auto_clear: ObjectEnvelope,
   irc_message: ObjectEnvelope,
-  notice: ObjectEnvelope,
+  notice: Schema.Struct({
+    type: Schema.Literal("notice"),
+    level: Schema.Literals(["info", "warning", "error"]),
+    message: Schema.String,
+    source: Schema.optional(Schema.String),
+  }),
   goal_updated: ObjectEnvelope,
 } as const;

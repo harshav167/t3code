@@ -1,8 +1,6 @@
 import {
   ApprovalRequestId,
-  EventId,
   ProviderDriverKind,
-  type ProviderRuntimeEvent,
   type ProviderSession,
   TurnId,
 } from "@t3tools/contracts";
@@ -17,12 +15,15 @@ import * as Stream from "effect/Stream";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
 import { ServerConfig } from "../../config.ts";
-import { ProviderAdapterSessionClosedError } from "../Errors.ts";
 import type { PendingUserInput } from "./PiExtensionUi.ts";
-import { type PiRpcDialect, resolvePiThinkingLevel } from "./PiModels.ts";
-import { makePiSessionMessageHandler, type PiSessionEvent } from "./PiSessionEvents.ts";
-import { makePiSessionLifecycle } from "./PiSessionLifecycle.ts";
+import { resolvePiThinkingLevel } from "./PiModels.ts";
+import { makePiDialectCodec } from "./PiRpcPiDialect.ts";
+import { makePiSessionMessageHandler } from "./PiSessionEvents.ts";
+import { makePiSessionEmitter } from "./PiSessionEmitter.ts";
+import { logPiSessionMessage } from "./PiSessionMessageLog.ts";
+import { failIfPiSessionStopped, makePiSessionLifecycle } from "./PiSessionLifecycle.ts";
 import { makePiSessionOperations } from "./PiSessionOperations.ts";
+import { makeInitialPiSessionState } from "./PiSessionState.ts";
 import { startPiSessionTransport } from "./PiSessionStart.ts";
 import type {
   MakePiSessionOptions,
@@ -32,9 +33,8 @@ import type {
 } from "./PiSessionTypes.ts";
 import { makePiSessionTransportOps } from "./PiSessionTransportOps.ts";
 import type { PiRpcTransport } from "./PiRpcTransport.ts";
+import { refreshPiUsage } from "./PiUsage.ts";
 import { type PiToolItem } from "./PiTools.ts";
-
-const PROVIDER = ProviderDriverKind.make("pi");
 
 export const makePiSession = Effect.fn("makePiSession")(function* (options: MakePiSessionOptions) {
   const crypto = yield* Crypto.Crypto;
@@ -50,52 +50,38 @@ export const makePiSession = Effect.fn("makePiSession")(function* (options: Make
     options.input.modelSelection?.instanceId === options.instanceId
       ? options.input.modelSelection
       : undefined;
-  let session: ProviderSession = {
-    threadId,
-    provider: PROVIDER,
-    providerInstanceId: options.instanceId,
-    status: "ready",
-    runtimeMode: options.input.runtimeMode,
-    ...(options.input.cwd ? { cwd: options.input.cwd } : {}),
-    ...(modelSelection?.model ? { model: modelSelection.model } : {}),
+  let session: ProviderSession = makeInitialPiSessionState({
+    input: options.input,
+    instanceId: options.instanceId,
+    model: modelSelection?.model,
     createdAt: yield* now,
-    updatedAt: yield* now,
-  };
+  });
   let transport: PiRpcTransport | undefined;
   let notificationFiber: Fiber.Fiber<void, never> | undefined;
   let stopped = false;
   let turn: PiTurnState | undefined;
   let currentModel = modelSelection?.model;
   let appliedThinking = resolvePiThinkingLevel(modelSelection);
-  let dialect: PiRpcDialect = "pi";
+  let codec = makePiDialectCodec();
   const turns: Array<{ id: TurnId; items: Array<PiToolItem> }> = [];
   const pendingApprovals = new Map<ApprovalRequestId, PiPendingApproval>();
   const pendingInputs = new Map<ApprovalRequestId, PendingUserInput>();
   const sessionApprovals = new Set<string>();
+  let completeReasoning = Effect.void;
 
-  const stamp = () =>
-    Effect.all({ eventId: nextUuid.pipe(Effect.map(EventId.make)), createdAt: now });
-  const emit = (event: PiSessionEvent) =>
-    stamp().pipe(
-      Effect.flatMap((value) =>
-        options.emit({
-          ...event,
-          ...value,
-          provider: PROVIDER,
-          providerInstanceId: options.instanceId,
-          threadId,
-        } as ProviderRuntimeEvent),
-      ),
-    );
-  const failClosed = () =>
-    stopped
-      ? Effect.fail(new ProviderAdapterSessionClosedError({ provider: PROVIDER, threadId }))
-      : Effect.void;
+  const emit = makePiSessionEmitter({
+    instanceId: options.instanceId,
+    threadId,
+    nextUuid,
+    now,
+    emit: options.emit,
+  });
+  const failClosed = () => failIfPiSessionStopped(stopped, threadId);
 
   const { request, writeExtension } = makePiSessionTransportOps({
-    provider: PROVIDER,
+    provider: ProviderDriverKind.make("pi"),
     nextUuid,
-    getTransport: () => transport!,
+    getTransport: () => transport,
   });
 
   const { completeTurn, settlePending, stopInternal } = makePiSessionLifecycle({
@@ -120,10 +106,11 @@ export const makePiSession = Effect.fn("makePiSession")(function* (options: Make
     },
     writeExtension,
     emit,
+    beforeCompleteTurn: Effect.suspend(() => completeReasoning),
     onStopped: options.onStopped(threadId),
   });
 
-  const handleMessage = makePiSessionMessageHandler({
+  const messageHandler = makePiSessionMessageHandler({
     nextRequestId: nextUuid.pipe(Effect.map(ApprovalRequestId.make)),
     getTurn: () => turn,
     pendingApprovals,
@@ -133,7 +120,36 @@ export const makePiSession = Effect.fn("makePiSession")(function* (options: Make
     emit,
     settlePending,
     completeTurn,
+    getCodec: () => codec,
+    commandInventory: options.commandInventory,
+    refreshUsage: (activeTurn) =>
+      refreshPiUsage({
+        turnId: activeTurn.turnId,
+        codec,
+        request,
+        emit,
+      }),
+    applyConfig: (model, thinking) =>
+      Effect.gen(function* () {
+        if (model !== undefined) currentModel = model;
+        if (thinking !== undefined) appliedThinking = thinking;
+        session = {
+          ...session,
+          ...(model !== undefined ? { model } : {}),
+          updatedAt: yield* now,
+        };
+        yield* emit({
+          type: "session.configured",
+          payload: {
+            config: {
+              ...(model !== undefined ? { model } : {}),
+              ...(thinking !== undefined ? { thinking } : {}),
+            },
+          },
+        });
+      }),
   });
+  completeReasoning = messageHandler.completeReasoning;
 
   const start = lock.withPermits(1)(
     Effect.gen(function* () {
@@ -151,12 +167,22 @@ export const makePiSession = Effect.fn("makePiSession")(function* (options: Make
         spawner,
         nextId: nextUuid,
         onExit: lock.withPermits(1)(stopInternal(true)),
+        commandInventory: options.commandInventory,
         ...(options.makeTransport ? { makeTransport: options.makeTransport } : {}),
       });
       transport = started.transport;
-      dialect = started.dialect;
+      codec = started.codec;
       notificationFiber = yield* Stream.fromQueue(transport.messages).pipe(
-        Stream.runForEach((message) => lock.withPermits(1)(handleMessage(message))),
+        Stream.runForEach((message) =>
+          lock.withPermits(1)(
+            logPiSessionMessage({
+              logger: options.nativeEventLogger,
+              message,
+              threadId,
+              now,
+            }).pipe(Effect.andThen(messageHandler.handle(message))),
+          ),
+        ),
         Effect.catchCause((cause) =>
           Effect.logError("Failed to process Pi runtime message.", { cause }),
         ),
@@ -205,7 +231,7 @@ export const makePiSession = Effect.fn("makePiSession")(function* (options: Make
     setThinking: (value) => {
       appliedThinking = value;
     },
-    getDialect: () => dialect,
+    getCodec: () => codec,
     turns,
     pendingApprovals,
     pendingInputs,

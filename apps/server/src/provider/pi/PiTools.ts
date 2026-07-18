@@ -5,8 +5,11 @@ import type {
   RuntimeItemId,
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
+import * as Option from "effect/Option";
 
 const encodeJsonString = Schema.encodeSync(Schema.UnknownFromJsonString);
+const UnknownRecord = Schema.Record(Schema.String, Schema.Unknown);
+const decodeUnknownRecord = Schema.decodeUnknownOption(UnknownRecord);
 
 export interface PiToolItem {
   readonly id: RuntimeItemId;
@@ -79,8 +82,8 @@ export function piToolOutputStreamKind(toolName: string): RuntimeContentStreamKi
 }
 
 export function summarizePiToolArgs(args: unknown): string | undefined {
-  if (!args || typeof args !== "object") return undefined;
-  const input = args as Record<string, unknown>;
+  const input = Option.getOrUndefined(decodeUnknownRecord(args));
+  if (input === undefined) return undefined;
   const command = input["command"] ?? input["cmd"];
   if (typeof command === "string" && command.trim().length > 0) return command.trim().slice(0, 400);
   const path = input["file_path"] ?? input["path"] ?? input["filePath"];
@@ -93,4 +96,15 @@ export function summarizePiToolArgs(args: unknown): string | undefined {
   } catch {
     return undefined;
   }
+}
+
+export function piToolTitle(toolName: string, args: unknown): string {
+  return summarizePiToolArgs(args) ?? toolName;
+}
+
+export function piToolError(result: unknown): string | undefined {
+  const input = Option.getOrUndefined(decodeUnknownRecord(result));
+  if (input === undefined) return undefined;
+  const error = input["error"] ?? input["message"];
+  return typeof error === "string" && error.trim().length > 0 ? error.trim() : undefined;
 }
