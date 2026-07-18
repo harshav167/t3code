@@ -27,6 +27,9 @@ omp models --json
 
 If that prints models, Pi is ready.
 
+The contribution test matrix currently exercises Pi 0.80.10 and OMP 17.0.4. The minimum
+versions above are the compatibility floor, not the only supported patch releases.
+
 ## Enable Pi In T3 Code
 
 Pi is off by default. Turn it on in Settings.
@@ -69,6 +72,52 @@ If discovery fails or times out, T3 Code falls back to your custom models only. 
 models with the Pi CLI (`pi config`) or by editing `~/.pi/agent/models.json`, then refresh
 provider status in Settings.
 
+Reasoning models expose only the thinking levels reported by the selected executable. T3 Code
+preserves the executable's order and default, including `xhigh` and `max`. Models that require
+reasoning never receive a synthetic `off` option. You can change the model and thinking level
+between turns without restarting the session.
+
+## Commands And Skills
+
+T3 Code discovers provider commands alongside models and exposes them in the existing composer
+command menu. Command names are not rewritten: a Pi skill named `skill:review` is inserted and
+sent as `/skill:review`. Descriptions and argument hints are retained when the RPC response
+provides them.
+
+OMP can update its command inventory while a session is running. T3 Code replaces the complete
+inventory for that provider instance and republishes the provider snapshot without losing its
+models, auth state, version, or update advisory. Pi refreshes commands when discovery runs and
+when a session starts.
+
+## Sessions, Streaming, And Tools
+
+The provider supports new sessions, saved-session resume, mid-turn steering, interrupt, and
+provider-native rollback. Rollback uses Pi's fork messages or OMP's branch messages and refuses
+to guess when no exact native target exists.
+
+Images attached in the composer are sent as RPC image content. Existing composer context
+references remain part of the prompt text.
+
+Thinking is rendered as a separate live reasoning row rather than assistant prose. Multiple
+thinking blocks retain their RPC content indexes, and the same stable item identity is used for
+start, deltas, completion, reconnect, and snapshot reconstruction.
+
+Tool calls retain their provider tool-call ID, structured input, streamed text, final structured
+result, images, error detail, and completion state. Command, file-change, MCP, collaboration,
+web-search, image, and dynamic tools use T3 Code's existing canonical item types. Unknown future
+tools fall back to a dynamic tool row instead of breaking the session.
+
+After a completed turn or successful compaction, T3 Code requests session statistics. When the
+runtime reports context usage, the UI receives the real context-window size, current context
+tokens, processed tokens, input, cached input, output, reasoning tokens, and tool count. A `null`
+context measurement is left unknown rather than displayed as zero, and statistics failures are
+non-fatal warnings.
+
+OMP additionally maps subagent lifecycle and progress to collaboration-agent rows, compaction to
+context-compaction rows, warning and error notices to runtime warnings, and `config_update` to the
+session's active model and thinking state. Informational OMP frames that have no T3 surface remain
+available in native provider logs when provider event logging is enabled.
+
 ## How Tool Approval Works
 
 OMP uses its native approval tiers: `approval-required` maps to `always-ask` (read-only tools
@@ -97,3 +146,9 @@ acceptable. If a gated session cannot load the approval extension, T3 Code refus
   profile behavior; T3 Code does not copy credentials between them.
 - **Plan mode is unavailable.** Pi and OMP RPC do not expose a plan-mode contract, so T3 Code
   hides the Plan/Build toggle for this provider.
+- **OMP standalone panels are not recreated.** IRC, goals, and todo-panel interfaces remain OMP
+  features. Their published slash commands can still be invoked, and their informational RPC
+  frames do not terminate a T3 Code session.
+- **Command inventory is instance-scoped.** Concurrent sessions for the same provider instance
+  share its executable, environment, working directory, and extensions. The most recent complete
+  command list therefore replaces the previous list.
