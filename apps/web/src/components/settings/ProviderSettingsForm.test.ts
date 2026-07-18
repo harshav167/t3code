@@ -22,6 +22,15 @@ describe("ProviderSettingsForm helpers", () => {
     ]);
   });
 
+  it("registers pi as an active configurable driver", () => {
+    const pi = DRIVER_OPTION_BY_VALUE[ProviderDriverKind.make("pi")];
+
+    expect(pi).toBeDefined();
+    if (!pi) throw new Error("Pi provider option was not registered.");
+    expect(pi.label).toBe("Pi");
+    expect(deriveProviderSettingsFields(pi).map((field) => field.key)).toEqual(["binaryPath"]);
+  });
+
   it("sources labels and descriptions from schema annotations", () => {
     const opencode = DRIVER_OPTION_BY_VALUE[ProviderDriverKind.make("opencode")];
     expect(opencode).toBeDefined();
