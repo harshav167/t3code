@@ -15,7 +15,9 @@ export interface PiRpcDiscoveryResult {
   readonly commands: ReadonlyArray<PiContextCommand>;
 }
 
-const REQUEST_TIMEOUT_MS = 5_000;
+// OMP can load a large plugin set before it answers its first RPC command.
+// Keep this below the provider-level discovery budget but above a cold launch.
+const REQUEST_TIMEOUT_MS = 10_000;
 
 export const discoverPiRpc = Effect.fn("discoverPiRpc")(function* (
   settings: PiSettings,

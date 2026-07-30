@@ -91,6 +91,17 @@ describe("decodePiStdoutLine", () => {
     });
   });
 
+  it("accepts OMP ready frames that include protocol metadata", () => {
+    expect(
+      decodePiStdoutLine(
+        '{"type":"ready","protocolVersion":1,"supportedProtocolVersions":[1,2],"maxFrameBytes":1048576,"maxReassembledFrameBytes":67108864}',
+      ),
+    ).toMatchObject({
+      _tag: "Message",
+      message: { _tag: "control" },
+    });
+  });
+
   it("keeps an identifiable malformed response isolated", () => {
     expect(
       decodePiStdoutLine(
@@ -127,7 +138,7 @@ describe("decodePiStdoutLine", () => {
     },
   );
 
-  it("ignores unknown optional frame types for forward compatibility", () => {
+  it("ignores unknown frames without retaining their payload", () => {
     expect(decodePiStdoutLine('{"type":"future_optional_frame","value":1}')).toEqual({
       _tag: "Ignored",
     });

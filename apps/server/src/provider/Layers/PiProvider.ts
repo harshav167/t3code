@@ -2,7 +2,6 @@ import {
   type ModelCapabilities,
   type PiSettings,
   type ServerProviderModel,
-  ProviderDriverKind,
 } from "@t3tools/contracts";
 import { createModelCapabilities } from "@t3tools/shared/model";
 import { compareSemverVersions } from "@t3tools/shared/semver";
@@ -26,8 +25,6 @@ import { piModelInfoToServerModel } from "../pi/PiModels.ts";
 import type { PiCommandInventory } from "../pi/PiCommands.ts";
 import { discoverPiRpc, type PiRpcDiscoveryResult } from "../pi/PiRpcDiscovery.ts";
 
-const PROVIDER = ProviderDriverKind.make("pi");
-
 const PI_PRESENTATION = {
   displayName: "Pi",
   badgeLabel: "Early Access",
@@ -36,7 +33,7 @@ const PI_PRESENTATION = {
 
 const EMPTY_CAPABILITIES: ModelCapabilities = createModelCapabilities({ optionDescriptors: [] });
 
-const PI_MODEL_DISCOVERY_TIMEOUT_MS = 15_000;
+const PI_MODEL_DISCOVERY_TIMEOUT_MS = 30_000;
 const MINIMUM_PI_VERSION = "0.80.7";
 const MINIMUM_OMP_VERSION = "17.0.1";
 
@@ -84,7 +81,7 @@ const modelsFromSettings = (
   piSettings: PiSettings,
   discovered: ReadonlyArray<ServerProviderModel>,
 ): ReadonlyArray<ServerProviderModel> =>
-  providerModelsFromSettings(discovered, PROVIDER, piSettings.customModels, EMPTY_CAPABILITIES);
+  providerModelsFromSettings(discovered, piSettings.customModels ?? [], EMPTY_CAPABILITIES);
 
 export const buildInitialPiProviderSnapshot = Effect.fn("buildInitialPiProviderSnapshot")(
   function* (piSettings: PiSettings) {
@@ -235,7 +232,23 @@ export const checkPiProviderStatus = Effect.fn("checkPiProviderStatus")(function
     cwd,
     environment,
   );
-  if (discovery !== undefined && commandInventory !== undefined) {
+  if (discovery === undefined) {
+    return buildServerProvider({
+      presentation: PI_PRESENTATION,
+      enabled: piSettings.enabled,
+      checkedAt,
+      models: fallbackModels,
+      probe: {
+        installed: true,
+        version: parsedVersion,
+        status: "error",
+        auth: { status: "unknown" },
+        message:
+          "Pi/OMP RPC model discovery failed before it returned an inventory. Retry the provider; if it persists, check the CLI RPC configuration.",
+      },
+    });
+  }
+  if (commandInventory !== undefined) {
     yield* commandInventory.replace(discovery.commands);
   }
   const discoveredModels = discovery?.models.map(piModelInfoToServerModel) ?? [];

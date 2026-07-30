@@ -6,6 +6,7 @@ import * as Schema from "effect/Schema";
 
 import { checkPiProviderStatus } from "../Layers/PiProvider.ts";
 import { discoverPiProviderContextViaRpc } from "../Layers/PiProvider.ts";
+import { discoverPiRpc } from "./PiRpcDiscovery.ts";
 
 const enabled = process.env.T3_PI_REAL_PROCESS_TESTS === "1";
 const decodeSettings = Schema.decodeSync(PiSettings);
@@ -31,6 +32,7 @@ it.layer(NodeServices.layer)("Pi RPC real processes", (it) => {
     it.effect(name, () =>
       Effect.gen(function* () {
         const settings = decodeSettings({ enabled: true, binaryPath: input.path });
+        const direct = yield* discoverPiRpc(settings, process.cwd(), process.env);
         const snapshot = yield* checkPiProviderStatus(settings, process.cwd());
         const discovered = yield* discoverPiProviderContextViaRpc(
           settings,
@@ -39,6 +41,9 @@ it.layer(NodeServices.layer)("Pi RPC real processes", (it) => {
         );
         expect(snapshot.installed).toBe(true);
         expect(snapshot.version).toMatch(/^\d+\.\d+\.\d+$/u);
+        expect(direct.codec.kind).toBe(input.dialect);
+        expect(direct.models.length).toBeGreaterThan(0);
+        expect(direct.commands.length).toBeGreaterThan(0);
         expect(discovered?.codec.kind).toBe(input.dialect);
         expect(discovered?.models.length).toBeGreaterThan(0);
         expect(discovered?.commands.length).toBeGreaterThan(0);

@@ -26,6 +26,14 @@ const NO_MODELS_PI_SCRIPT = HEALTHY_PI_SCRIPT.replace(
 const HEALTHY_OMP_SCRIPT = HEALTHY_PI_SCRIPT.replace("pi 0.80.9", "omp/17.0.1");
 const OLD_PI_SCRIPT = HEALTHY_PI_SCRIPT.replace("pi 0.80.9", "pi 0.80.6");
 const OLD_OMP_SCRIPT = HEALTHY_PI_SCRIPT.replace("pi 0.80.9", "omp/17.0.0");
+const RPC_FAILURE_PI_SCRIPT = [
+  "#!/bin/sh",
+  'case "$1" in',
+  '  --version) printf "pi 0.80.9\\n"; exit 0 ;;',
+  "  *) exit 1 ;;",
+  "esac",
+  "",
+].join("\n");
 
 describe("buildInitialPiProviderSnapshot", () => {
   it.effect("returns a disabled snapshot when settings.enabled is false", () =>
@@ -210,6 +218,28 @@ it.layer(NodeServices.layer)("checkPiProviderStatus", (it) => {
       expect(snapshot.status).toBe("warning");
       expect(snapshot.auth.status).toBe("unknown");
       expect(snapshot.message).toMatch(/no models/i);
+    }),
+  );
+
+  it.effect("reports an RPC discovery failure instead of claiming the CLI has no models", () =>
+    Effect.gen(function* () {
+      const snapshot = yield* Effect.scoped(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const dir = yield* fs.makeTempDirectoryScoped({ prefix: "t3code-pi-rpc-failure-" });
+          const piPath = path.join(dir, "pi");
+          yield* fs.writeFileString(piPath, RPC_FAILURE_PI_SCRIPT);
+          yield* fs.chmod(piPath, 0o755);
+          return yield* checkPiProviderStatus(
+            decodePiSettings({ enabled: true, binaryPath: piPath }),
+            dir,
+          );
+        }),
+      );
+
+      expect(snapshot.status).toBe("error");
+      expect(snapshot.message).toMatch(/RPC model discovery failed/i);
     }),
   );
 });
