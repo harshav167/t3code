@@ -79,7 +79,7 @@ export function makePiSessionMessageHandler(options: MakePiSessionMessageHandler
         const itemId = RuntimeItemId.make(event.toolCallId);
         const itemType = classifyPiToolItemType(event.toolName);
         turn.items.push({ id: itemId, type: itemType, toolName: event.toolName, args: event.args });
-        const detail = summarizePiToolArgs(event.args);
+        const detail = summarizePiToolArgs(event.args, event.toolName);
         yield* options.emit({
           type: "item.started",
           turnId: turn.turnId,
@@ -87,7 +87,7 @@ export function makePiSessionMessageHandler(options: MakePiSessionMessageHandler
           payload: {
             itemType,
             title: piToolTitle(event.toolName, event.args),
-            ...(detail !== undefined ? { detail: event.toolName } : {}),
+            ...(detail !== undefined ? { detail } : {}),
             data: { toolName: event.toolName, input: event.args },
           },
           ...raw,
@@ -136,7 +136,7 @@ export function makePiSessionMessageHandler(options: MakePiSessionMessageHandler
           item.result = event.result;
           item.status = event.isError ? "failed" : "completed";
         }
-        const detail = summarizePiToolArgs(item?.args);
+        const detail = summarizePiToolArgs(item?.args, event.toolName);
         const error = event.isError ? piToolError(event.result) : undefined;
         yield* options.emit({
           type: "item.completed",
@@ -146,7 +146,7 @@ export function makePiSessionMessageHandler(options: MakePiSessionMessageHandler
             itemType: classifyPiToolItemType(event.toolName),
             title: piToolTitle(event.toolName, item?.args),
             status: event.isError ? "failed" : "completed",
-            ...(detail !== undefined ? { detail: event.toolName } : {}),
+            ...(detail !== undefined ? { detail } : {}),
             data: {
               toolName: event.toolName,
               input: item?.args,

@@ -691,6 +691,47 @@ describe("workEntryIndicatesToolFailure", () => {
 });
 
 describe("deriveWorkLogEntries", () => {
+  it("keeps user-input lifecycle events out of the activity log", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "input-requested",
+        kind: "user-input.requested",
+        summary: "User input requested",
+        tone: "info",
+      }),
+      makeActivity({
+        id: "input-resolved",
+        kind: "user-input.resolved",
+        summary: "User input submitted",
+        tone: "info",
+      }),
+      makeActivity({
+        id: "tool-completed",
+        kind: "tool.completed",
+        summary: "Read project files",
+      }),
+    ];
+
+    expect(deriveWorkLogEntries(activities).map((entry) => entry.id)).toEqual(["tool-completed"]);
+  });
+
+  it("omits legacy activity rows made only of serialized control payloads", () => {
+    const entries = deriveWorkLogEntries([
+      makeActivity({
+        id: "raw-control-frame",
+        kind: "tool.completed",
+        summary: '{"op":"init","list":[{"task":"Review the diff"}]}',
+        payload: {
+          itemType: "collab_agent_tool_call",
+          title: '{"op":"init","list":[{"task":"Review the diff"}]}',
+          detail: '{"op":"init","list":[{"task":"Review the diff"}]}',
+        },
+      }),
+    ]);
+
+    expect(entries).toEqual([]);
+  });
+
   it("omits tool started entries and keeps completed entries", () => {
     const activities: OrchestrationThreadActivity[] = [
       makeActivity({

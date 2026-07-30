@@ -639,9 +639,12 @@ export function deriveWorkLogEntries(
     if (activity.kind === "tool.started") continue;
     if (activity.kind === "task.started") continue;
     if (activity.kind === "context-window.updated") continue;
+    if (activity.kind === "user-input.requested" || activity.kind === "user-input.resolved")
+      continue;
     if (activity.summary === "Checkpoint captured") continue;
     if (isPlanBoundaryToolActivity(activity)) continue;
-    entries.push(toDerivedWorkLogEntry(activity));
+    const entry = toDerivedWorkLogEntry(activity);
+    if (entry) entries.push(entry);
   }
   return collapseDerivedWorkLogEntries(entries).map((entry) => {
     const { activityKind, collapseKey: _collapseKey, ...rest } = entry;
@@ -680,25 +683,25 @@ function extractWorkLogToolLifecycleStatus(
   return undefined;
 }
 
-function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWorkLogEntry {
+function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWorkLogEntry | null {
   const payload =
     activity.payload && typeof activity.payload === "object"
       ? (activity.payload as Record<string, unknown>)
       : null;
   const commandPreview = extractToolCommand(payload);
   const changedFiles = extractChangedFiles(payload);
-  const title = extractToolTitle(payload);
+  const title = displayWorkLogText(extractToolTitle(payload));
   const isTaskActivity = activity.kind === "task.progress" || activity.kind === "task.completed";
   const taskSummary =
     isTaskActivity && typeof payload?.summary === "string" && payload.summary.length > 0
-      ? payload.summary
+      ? displayWorkLogText(payload.summary)
       : null;
   const taskDetailAsLabel =
     isTaskActivity &&
     !taskSummary &&
     typeof payload?.detail === "string" &&
     payload.detail.length > 0
-      ? payload.detail
+      ? displayWorkLogText(payload.detail)
       : null;
   const taskLabel = taskSummary || taskDetailAsLabel;
   const detail = isTaskActivity
@@ -709,12 +712,15 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
       ? stripTrailingExitCode(payload.detail).output
       : null
     : extractToolDetail(payload, title ?? activity.summary);
+  const activityLabel = displayWorkLogText(activity.summary);
+  const label = taskLabel || activityLabel || title || displayWorkLogText(detail);
+  if (!label) return null;
   const toolCallId = isTaskActivity ? null : extractToolCallId(payload);
   const entry: DerivedWorkLogEntry = {
     id: activity.id,
     createdAt: activity.createdAt,
     turnId: activity.turnId,
-    label: taskLabel || activity.summary,
+    label,
     tone:
       activity.kind === "task.progress"
         ? "thinking"
@@ -767,6 +773,16 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
     entry.collapseKey = collapseKey;
   }
   return entry;
+}
+
+/** Internal tool envelopes are retained in activity payloads but never rendered as work-log text. */
+function displayWorkLogText(value: string | null): string | null {
+  if (value === null) return null;
+  return isSerializedWorkLogPayload(value) ? null : value;
+}
+
+export function isSerializedWorkLogPayload(value: string): boolean {
+  return /^\{\s*"/.test(value.trim());
 }
 
 function collapseDerivedWorkLogEntries(

@@ -503,7 +503,7 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain('data-user-message-footer="true"');
   });
 
-  it("renders context compaction entries in the normal work log", () => {
+  it("renders context compaction entries in the normal activity log", () => {
     const markup = renderToStaticMarkup(
       <MessagesTimeline
         {...buildProps()}
@@ -524,7 +524,33 @@ describe("MessagesTimeline", () => {
     );
 
     expect(markup).toContain("Context compacted");
-    expect(markup).toContain("Work Log");
+    expect(markup).toContain("Activity");
+  });
+
+  it("does not render serialized tool payloads in the activity timeline", () => {
+    const rawPayload = '{"op":"init","list":[{"task":"Review the diff"}]}';
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[
+          {
+            id: "entry-raw-tool",
+            kind: "work",
+            createdAt: "2026-03-17T19:12:28.000Z",
+            entry: {
+              id: "raw-tool",
+              createdAt: "2026-03-17T19:12:28.000Z",
+              label: "Subagent task",
+              tone: "tool",
+              detail: rawPayload,
+            },
+          },
+        ]}
+      />,
+    );
+
+    expect(markup).toContain("Subagent task");
+    expect(markup).not.toContain(rawPayload);
   });
 
   it("formats changed file paths from the workspace root", () => {

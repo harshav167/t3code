@@ -11,6 +11,7 @@ import {
 import {
   classifyPiApprovalRequestType,
   classifyPiToolItemType,
+  piToolTitle,
   piToolOutputStreamKind,
   summarizePiToolArgs,
 } from "./PiTools.ts";
@@ -70,10 +71,32 @@ describe("summarizePiToolArgs", () => {
     expect(summarizePiToolArgs({ query: "find TODOs" })).toBe("find TODOs");
   });
 
-  it("serializes other objects and ignores non-objects", () => {
-    expect(summarizePiToolArgs({ foo: "bar" })).toBe('{"foo":"bar"}');
+  it("does not expose arbitrary tool arguments as JSON", () => {
+    expect(summarizePiToolArgs({ foo: "bar" })).toBeUndefined();
     expect(summarizePiToolArgs(undefined)).toBeUndefined();
     expect(summarizePiToolArgs("string")).toBeUndefined();
+  });
+
+  it("summarizes delegated-task control frames without exposing their payload", () => {
+    expect(
+      summarizePiToolArgs({
+        op: "init",
+        list: [{ task: "Review the diff" }, { task: "Run focused tests" }],
+      }),
+    ).toBe("Started 2 tasks");
+    expect(summarizePiToolArgs({ op: "done", task: "Review the diff" })).toBe(
+      "Completed Review the diff",
+    );
+    expect(summarizePiToolArgs({ context: "## Goal\nReview the diff" })).toBe("Sent task context");
+  });
+
+  it("uses readable tool names when an input has no safe summary", () => {
+    expect(
+      summarizePiToolArgs({ path: "/workspace/.agents/code-review" }, "Skill://code-review"),
+    ).toBeUndefined();
+    expect(piToolTitle("Skill://code-review", { path: "/workspace/.agents/code-review" })).toBe(
+      "Loaded code-review skill",
+    );
   });
 });
 

@@ -4,10 +4,9 @@ import type {
   RuntimeContentStreamKind,
   RuntimeItemId,
 } from "@t3tools/contracts";
-import * as Schema from "effect/Schema";
 import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 
-const encodeJsonString = Schema.encodeSync(Schema.UnknownFromJsonString);
 const UnknownRecord = Schema.Record(Schema.String, Schema.Unknown);
 const decodeUnknownRecord = Schema.decodeUnknownOption(UnknownRecord);
 
@@ -81,25 +80,62 @@ export function piToolOutputStreamKind(toolName: string): RuntimeContentStreamKi
   }
 }
 
-export function summarizePiToolArgs(args: unknown): string | undefined {
+function toolSummaryText(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim().length > 0
+    ? value.trim().slice(0, 400)
+    : undefined;
+}
+
+function isPiSkillTool(toolName: string): boolean {
+  return /^skill:\/\//i.test(toolName.trim());
+}
+
+function summarizePiControlArgs(input: Readonly<Record<string, unknown>>): string | undefined {
+  const op = toolSummaryText(input["op"])?.toLowerCase();
+  if (op === "init") {
+    const taskCount = Array.isArray(input["list"]) ? input["list"].length : 0;
+    return taskCount > 0
+      ? `Started ${taskCount} task${taskCount === 1 ? "" : "s"}`
+      : "Started task";
+  }
+  if (op === "done") {
+    const task = toolSummaryText(input["task"]);
+    return task ? `Completed ${task}` : "Completed task";
+  }
+  if (op === "wait") {
+    return "Waiting for task updates";
+  }
+  if (op) {
+    return `Updated ${op}`;
+  }
+  return toolSummaryText(input["context"]) ? "Sent task context" : undefined;
+}
+
+function readablePiToolName(toolName: string): string {
+  const trimmed = toolName.trim();
+  const skill = /^skill:\/\/([^/\s]+)$/i.exec(trimmed);
+  return skill ? `Loaded ${skill[1]} skill` : trimmed || "Tool call";
+}
+
+export function summarizePiToolArgs(args: unknown, toolName?: string): string | undefined {
   const input = Option.getOrUndefined(decodeUnknownRecord(args));
   if (input === undefined) return undefined;
+  if (toolName !== undefined && isPiSkillTool(toolName)) return undefined;
+  const controlSummary = summarizePiControlArgs(input);
+  if (controlSummary) return controlSummary;
   const command = input["command"] ?? input["cmd"];
-  if (typeof command === "string" && command.trim().length > 0) return command.trim().slice(0, 400);
+  const commandSummary = toolSummaryText(command);
+  if (commandSummary) return commandSummary;
   const path = input["file_path"] ?? input["path"] ?? input["filePath"];
-  if (typeof path === "string" && path.trim().length > 0) return path.trim().slice(0, 400);
+  const pathSummary = toolSummaryText(path);
+  if (pathSummary) return pathSummary;
   const pattern = input["pattern"] ?? input["query"] ?? input["description"];
-  if (typeof pattern === "string" && pattern.trim().length > 0) return pattern.trim().slice(0, 400);
-  try {
-    const serialized = encodeJsonString(input);
-    return serialized.length <= 400 ? serialized : `${serialized.slice(0, 397)}...`;
-  } catch {
-    return undefined;
-  }
+  return toolSummaryText(pattern);
 }
 
 export function piToolTitle(toolName: string, args: unknown): string {
-  return summarizePiToolArgs(args) ?? toolName;
+  if (isPiSkillTool(toolName)) return readablePiToolName(toolName);
+  return summarizePiToolArgs(args, toolName) ?? readablePiToolName(toolName);
 }
 
 export function piToolError(result: unknown): string | undefined {
